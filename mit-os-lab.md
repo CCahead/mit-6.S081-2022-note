@@ -1,22 +1,4 @@
-Lec3 
 
-OS 要够强壮
-
-App cannot crash OS, either break out of its isolation
-
-Who knows its kernel mode or user mode? Processor has a bit identifying which is the kernel or user: 1 stands for user, and 0 stands for kernel
-
-User             Kernel 
-
-sys_fork ->  syscall -> fork
-
-引入了一个概念： kernel 就是trust computing base
-
-shell：talks to filesystem
-
-客服 帮我转寄6605 250 783 
-
-95380 人工
 
 # 1.仓库建立
 
@@ -220,6 +202,18 @@ write(fds[1],"ping",4);
 ```
 
 ![1706064351441](assets/1706064351441.png)
+
+原来是这里！fork()之后，子进程就创建出来了，那他也会写一个ping进去！所以在管道里面就有两个ping！
+
+![1706082765980](assets/1706082765980.png)
+
+调整一下位置就好啦~
+
+![1706083331938](assets/1706083331938.png)
+
+![1706083451931](assets/1706083451931.png)
+
+测试点通过~
 
 ### 1.3primes
 
@@ -496,3 +490,125 @@ int main(){
 ![1706066125492](assets/1706066125492.png)
 
 同样会返回一个结果
+
+#### 2.close() 
+
+参见这个文档
+
+
+
+[Input-output system calls in C | Create, Open, Close, Read, Write - GeeksforGeeks](https://www.geeksforgeeks.org/input-output-system-calls-c-create-open-close-read-write/)
+
+**Read from stdin => read from fd 0**: Whenever we write any character from the keyboard, it reads from stdin through fd 0 and saves to a file named /dev/tty.
+**Write to stdout => write to fd 1**: Whenever we see any output to the video screen, it’s from the file named /dev/tty and written to stdout in screen through fd 1.
+**Write to stderr => write to fd 2**: We see any error to the video screen, it is also from that file write to stderr in screen through fd 2.
+
+相当于每一次打开进程都会把标准输入输出、以及标准err打开：他们的标识符fd就是0,1,2
+
+```c
+// C program to illustrate close system Call 
+#include<stdio.h> 
+#include<fcntl.h> 
+int main() 
+{ 
+    // assume that foo.txt is already created 
+    int fd1 = open("foo.txt", O_RDONLY, 0); 
+    close(fd1); 
+     
+    // assume that baz.tzt is already created 
+    int fd2 = open("baz.txt", O_RDONLY, 0); 
+     
+    printf("fd2 = % d\n", fd2); 
+    exit(0); 
+} 
+```
+
+这一段的描述如下：
+
+Here, In this code first open() returns **3** because when the main process is created, then fd **0, 1, 2** are already taken by **stdin**, **stdout,** and **stderr**. So the first unused file descriptor is **3** in the file descriptor table. After that in close() system call is free it these **3** file descriptors and then set **3** file descriptors as **null**. So when we called the second open(), then the first unused fd is also **3**. So, the output of this program is **3**.
+
+![1706079318277](assets/1706079318277.png)
+
+但是我稍加修改，比如我先关闭close(0)，把标准输入关闭了，那最小的fd就是0，如果要打开文件的话，他会使用这个最小的，不使用的fd：0开始使用
+
+![1706079068116](assets/1706079068116.png)
+
+问题，如果我有子进程呢？怎么办呢？比如我这样写一个代码
+
+```c
+#include<stdio.h>
+#include<fcntl.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main()
+{
+    close(0);
+    // assume that foo.txt is already created 
+    int fd1 = open("foo.txt", O_RDONLY, 0);
+    close(fd1);
+
+    // assume that baz.tzt is already created 
+    int pid=fork();
+    if(pid==0){<------------儿子执行
+       int fd2 = open("baz.txt", O_RDONLY, 0);
+
+    printf("fd2-children = % d\n", fd2);
+    }<---------------这一段是儿子执行的
+    int fd2 = open("baz.txt", O_RDONLY, 0); <----这里是父子都可以用
+
+    printf("fd2-parents = % d\n", fd2);
+    exit(0);
+}
+```
+
+在fork前，被占用的fd:是1,2（因为fd1虽然占用了一小会fd=0，但是他申请关闭了，所以recent unused应该是fd=0）；在fork后，所有的数据都会被拷贝到child，包括文件标识符的状态，此时父子俩都应该是1,2被使用，其他的是好的；提问，每个进程对应的stdin,stdout,stderr不一样吗？
+
+![1706079735738](assets/1706079735738.png)
+
+所以执行应该是：父亲在执行完fork之后，直接执行int fd2 = open("baz.txt", O_RDONLY, 0);这一行，然后打印，那这个时候肯定是**fd2-parents = 0**；而对于儿子来说：先执行了if内的子进程专属的代码，然后分配了fd=0给专属片段；然后下面这一段没有规定父子关系，父子都能用！所以他又打开了一次，再次分配了一个unused，就是fd=3
+
+改一下代码，
+
+```c
+int pid=fork();
+    if(pid==0){<------------儿子执行
+       int fd2 = open("baz.txt", O_RDONLY, 0);
+
+    printf("fd2-children = % d\n", fd2);
+    }<---------------这一段是儿子执行的
+    else{int fd2 = open("baz.txt", O_RDONLY, 0); <----这里是父用
+
+    printf("fd2-parents = % d\n", fd2);
+    exit(0);
+    }
+```
+
+[Wait System Call in C - GeeksforGeeks](https://www.geeksforgeeks.org/wait-system-call-c/)
+
+![1706080439641](assets/1706080439641.png)
+
+加一段：wait，让父亲等儿子
+
+![1706080681301](assets/1706080681301.png)
+
+关于close的这个问题还没有解决，比如close一个值，怎么打开呢？read,write不能直接打开吗？
+
+
+
+
+
+Lec3 
+
+OS 要够强壮
+
+App cannot crash OS, either break out of its isolation
+
+Who knows its kernel mode or user mode? Processor has a bit identifying which is the kernel or user: 1 stands for user, and 0 stands for kernel
+
+User             Kernel 
+
+sys_fork ->  syscall -> fork
+
+引入了一个概念： kernel 就是trust computing base
+
+shell：talks to filesystem
