@@ -219,6 +219,69 @@ write(fds[1],"ping",4);
 
 
 
+
+
+![1706101788890](assets/1706101788890.png)
+
+如果我直接在这个框架下使用2-35进行pick的话，会溢出？（哦，我main函数好像有点问题，
+
+```c
+
+void 
+pick(int *a,int n){
+    if(n==1&&a[0]!=0){
+        exit(0);
+    }
+    else{
+    printf("prime %d\n",*a);
+   int* b=malloc(sizeof(int)*n);//好像int b[n]这种写法会报错
+   int j=0;
+    for(int i=1;i<=n-1;i++){
+        if(a[i]%a[0]!=0){//不是a[0]的倍数的话，就记录下来
+            b[j++]=a[i];
+        }
+    }
+    pick(b,j);
+} 
+}
+```
+
+如果值控制在2-9好像可以正确识别？
+
+![1706101929546](assets/1706101929546.png)
+
+![1706101935681](assets/1706101935681.png)
+
+哦不，好像只能识别到5？
+
+如果我初始化一个：[2,36]的数组的话，好像31不能被识别（即递归出口这个没有被正确识别）
+
+![1706102002635](assets/1706102002635.png)
+
+
+
+加一行代码即实现：
+
+![1706102125439](assets/1706102125439.png)
+
+![1706102142111](assets/1706102142111.png)
+
+done！但我好像没有用到pipe。。。。汗颜
+
+他要求的任务点是：
+
+Your goal is to use `pipe` and `fork` to set up the pipeline. The first process feeds the numbers 2 through 35 into the pipeline. For each prime number, you will arrange to create one process that reads from its left neighbor over a pipe and writes to its right neighbor over another pipe. Since xv6 has limited number of file descriptors and processes, the first process can stop at 35.
+
+要用pipe跟fork来完成这个操作。。。
+
+
+
+
+
+
+
+
+
 读第一章发现，在操作系统进程粒度上，为什么进程能够实现重定向：用fork来实现的；fork能够copy父进程所有的内容，所以子进程可以帮助父进程执行父进程接收到的指令，且不影响父亲的上下文
 
 具体来说就是：比如： child: change file description-> parents don't change 
