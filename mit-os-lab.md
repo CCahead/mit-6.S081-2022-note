@@ -266,6 +266,10 @@ pick(int *a,int n){
 
 ![1706102142111](assets/1706102142111.png)
 
+每次进入递归都是一个新的数组，把所有不是a[0]倍数的元素全部记入b[]数组并且用j标号，再次让 b[],j进入循环并且迭代
+
+
+
 done！但我好像没有用到pipe。。。。汗颜
 
 他要求的任务点是：
@@ -274,11 +278,378 @@ Your goal is to use `pipe` and `fork` to set up the pipeline. The first process 
 
 要用pipe跟fork来完成这个操作。。。
 
+如果要使用管道的话？应该怎么做呢？管道
+
+Close[0]关闭
+
+
+
+父进程处理什么？整体规划
+
+子进程处理什么？第一个不能整除的数
+
+
+
+他们怎么通信？通过pipe
+
+在学习一下
+
+
+
+相当于： 你在写端传入int， 在读端就读int
+
+```c
+ //   child:  
+假设：传入 a[10];
+write(fd[1],&a[0],sizeof(a[0]));
+相当于这里写入的是内存块的地址
+//		parent:
+int tmp;
+read(fd[0],&tmp,4);
+```
+
+在宏观上保持这样的行为：父进程负责打印第一个primes，子进程负责传递
+
+As another example, which Hoare credits to Doug McIlroy, consider the generation of all primes less than a thousand. The sieve of Eratosthenes can be simulated by a pipeline of processes executing the following pseudocode:
+
+
+
+```
+p = get a number from left neighbor
+print p
+loop:
+    n = get a number from left neighbor
+    if (p does not divide n)
+        send n to right neighbor
+```
+
+A generating process can feed the numbers 2, 3, 4, ..., 1000 into the left end of the pipeline: the first process in the line eliminates the multiples of 2, the second eliminates the multiples of 3, the third eliminates the multiples of 5, and so on:
+
+![img](https://swtch.com/~rsc/thread/sieve.gif)
+
+The linear pipeline nature of the examples thus far is misrepresentative of the general nature of CSP, but even restricted to linear pipelines, the model is quite powerful. The power has been forcefully demonstrated by the success of the filter-and-pipeline approach for which the Unix operating system is well known [[2\]](https://swtch.com/~rsc/thread/#2) Indeed, pipelines predate Hoare's paper. In an internal Bell Labs memo dated October 11, 1964, Doug McIlroy was toying with ideas that would become Unix pipelines: “We should have some ways of coupling programs like garden hose--screw in another segment when it becomes necessary to massage data in another way. This is the way of IO also.” [[3\]](https://swtch.com/~rsc/thread/#3)
+
+
+
+P,C share the: first array
+
+C经过遍历找到next array,C->P the print
+
+A打印并传递->B打印并传递
+
+**正确思路：**
+
+```c
+//parent:
+p = get a number from left neighbor
+print p
+loop:
+    n = get a number from left neighbor
+    if (p does not divide n)
+        send n to right neighbor
+```
+
+应该是这样一个思路： 先把流水线这个思路写出来，然后再用write,read控制它的行为
+
+![image-20240306003831734](/Users/heyuanjun/Library/Application Support/typora-user-images/image-20240306003831734.png)
+
+不然就会出现这样的并发访问问题
+
+
+
+```aleh
+            c <−= 1+1;      /* send a 2 on channel ‘c’ */
+            i = <−c;        /* assign value received on c to i */
+            func(<−c);      /* pass value received on c to func */
+```
+
+![image-20240306130616905](/Users/heyuanjun/Library/Application Support/typora-user-images/image-20240306130616905.png)
+
+我再次看了一遍这个程序，好像跟我想象中的不太一样..我想的是：一层处理完之后把处理完的数据写成新的array，然后把这个array给下一层处理，耗时就是：t1+t2+t3，应该有O（N^2）的复杂度（类似于等差数列？但是也不太算等差..）
+
+但是它在这里提到的pipeline是指： 上游处理完一个数据，立马发送给下一个进程
+
+- Hint: `read` returns zero when the write-side of a pipe is closed. 这个提示很重要，意思是可以用一个while循环控制read的读入，类似于copy 或者cat函数的那种处理办法
+  ```c
+    while((n = read(fd, buf, sizeof(buf))) > 0) {
+      if (write(1, buf, n) != n) {
+        fprintf(2, "cat: write error\n");
+        exit(1);
+      }
+    }
+  这里n = read(fd, buf, sizeof(buf)；n>0时这个循环才能执行下去；
+  那请问这里：write跟read返回值是什么？
+  Read：Read n bytes into buf; returns number read; or 0 if end of file. 代表的是读的、写的字符数量
+  Write n bytes from buf to file descriptor fd; returns n.
+  ```
+
+  问题：流水线是先有这些流水进程？还是一边处理数据一边产生进程？
+
+  行为是怎么样的？
+
+  首先第一个子进程读到数据，并且读到第一个minor并且找到第一个不能被minor整除的数，那就应该加一个流水线了
+
+```c
+int fd[2],pid;
+    pipe(fd);
+    write(fd[1],a,sizeof(int)*n);
+    close(fd[1]);
+    close(fd[0]);<------
+    // parent process: input data
+    pid=fork();
+    if(pid==0){
+        while((n=read(fd[0],&i,4))>0){printf("%d",i);}
+        // proceed(fd[0]);
+    }
+    else{
+        wait(0);
+    }
+这一段会报错：
+  usertrap(): unexpected scause 0x000000000000000f pid=3
+            sepc=0x0000000000000208 stval=0x0000000000014000
+  相当于我好像在读取的时候就报错了，没读出来吧？是不是我提前关闭读写端的原因啊？不是！ 这样写，可能是没有控制好异步关系？
+ 后面改成：
+  int fd[2],pid;
+    pipe(fd);
+    // parent process: input data
+    pid=fork();
+    if(pid==0){
+        close(fd[1]);
+        int c=0;
+        printf("child before");
+        while(1){
+            printf("iter:%d; I'm wait:",c++);
+            n=read(fd[0],&i,4);
+            if(n<=0){
+                break;
+            }          
+            printf("%d\n",i);
+        }
+        printf("child after");
+        // proceed(fd[0]);
+        exit(0);
+    }
+    else{
+        write(fd[1],a,sizeof(int)*n);
+        close(fd[1]);
+        close(fd[0]);
+        // printf("p:wait\n");
+        wait(0);
+        // printf("p:go\n");
+        exit(0);
+
+    }
+//还是有上述问题
+  iter:0; I'm wait:2
+iter:1; I'm wait:3
+iter:2; I'm wait:4
+iter:3; I'm wait:5
+iter:4; I'm wait:6
+iter:5; I'm wait:7
+iter:6; I'm wait:8
+iter:7; I'm wait:9
+iter:8; I'm wait:10
+iter:9; I'm wait:11
+iter:10; I'm wait:12
+iter:11; I'm wait:13
+iter:12; I'm wait:14
+iter:13; I'm wait:
+//可以根据打印结果看到，打印完之后还在等待read
+```
+
+为什么子进程在父进程完成write并关闭父进程端的写管道之后还是在等待read呢？因为**子进程没有关闭写端**，让**子进程的读端read仍然等待，导致死锁**
+
+```shell
+$ test
+child beforeiter:0; I'm wait:2
+iter:1; I'm wait:3
+iter:2; I'm wait:4
+iter:3; I'm wait:5
+iter:4; I'm wait:6
+iter:5; I'm wait:7
+iter:6; I'm wait:8
+iter:7; I'm wait:9
+iter:8; I'm wait:10
+iter:9; I'm wait:11
+iter:10; I'm wait:12
+iter:11; I'm wait:13
+iter:12; I'm wait:14
+iter:13; I'm wait:child after$
+```
+
+
+
+```c
+void primes_exec(){
+    int n=13;
+    //[2,n+1]
+    int* a=malloc(sizeof(int)*n);
+    int i=0;
+    for(i=0;i<=n;i++){
+        a[i]=i+2;
+    }
+    
+    int fd[2],pid;
+    pipe(fd);
+    // parent process: input data
+    pid=fork();
+    if(pid==0){
+        close(fd[1]);关闭不必要的端口
+        int c=0;
+        printf("child before");
+        while(1){
+            printf("iter:%d; I'm wait:",c++);
+            n=read(fd[0],&i,4);
+            if(n<=0){
+                break;
+            }          
+            printf("%d\n",i);
+        }
+        printf("child after");
+        // proceed(fd[0]);
+        exit(0);
+    }
+    else{
+        write(fd[1],a,sizeof(int)*n);
+        close(fd[1]);这里 要关闭不必要的端口
+        close(fd[0]);关闭不必要的端口
+        // printf("p:wait\n");
+        wait(0);
+        // printf("p:go\n");
+        exit(0);
+
+    }
+}
+//while读取这一段，这样写也是可以的！
+ while((n=read(fd[0],&i,4))>0){
+            // printf("iter:%d; I'm wait:",c++);
+                   
+            printf("%d\n",i);
+        }
+```
+
+然后就是：
+
+
+
+### 1.4 find
+
+观察ls，它先打开文件
+
+```c
+  if((fd = open(path, 0)) < 0){
+    fprintf(2, "ls: cannot open %s\n", path);
+    return;
+  }
+```
+
+然后再读取该文件的参数
+
+然后就是对string的操作：
+
+几种常用的string操作符：
+
+```c
+char *strcpy(char *dest, const char *src)   dest<-src
+  Parameters
+
+dest − This is the pointer to the destination array where the content is to be copied.
+src − This is the string to be copied.
+Return Value
+
+This returns a pointer to the destination string dest.
+
+
+#include <stdio.h>
+#include <string.h>
+
+int main () {
+   char src[40];
+   char dest[100];
+  
+   memset(dest, '\0', sizeof(dest));
+   strcpy(src, "This is tutorialspoint.com");
+   strcpy(dest, src);
+
+   printf("Final copied string : %s\n", dest);
+   
+   return(0);
+}
+```
+
+```c
+int strcmp(const char *str1, const char *str2)
+Parameters
+
+str1 − This is the first string to be compared.
+str2 − This is the second string to be compared.
+Return Value
+
+This function return values that are as follows −
+
+if Return value < 0 then it indicates str1 is less than str2.
+if Return value > 0 then it indicates str2 is less than str1.
+if Return value = 0 then it indicates str1 is equal to str2.
+```
+
+```c
+strlen
+```
+
+
+
+A,B:A-B<0 =>A<B
+
+#### 1.void ls(char *path)
+
+一个char缓存区，跟指针；一个文件描述符；一个描述目录的数据结构；一个记录metadata的结构stat
+
+然后打开文件，记录metadata；
+
+如果遇到目录结构的话：
+
+```c
+// Directory is a file containing a sequence of dirent structures.
+#define DIRSIZ 14
+
+struct dirent {
+  ushort inum;
+  char name[DIRSIZ];
+};
+```
+
+目录的数据结构是这样的
+
+
+
+```c
+ case T_DIR:
+    if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
+      printf("ls: path too long\n");
+      break;
+    } //这个为什么前后要+1，我的理解是要做alignment，前后要有元素才行1+14+1=16bytes(1 char =1 byte)
+    strcpy(buf, path);//把之前ls传入的path拷贝到缓存区
+    p = buf+strlen(buf);//临时指针p指向buf+strlen(buf)?这里有点没懂
+    *p++ = '/';
+    while(read(fd, &de, sizeof(de)) == sizeof(de)){
+      if(de.inum == 0)
+        continue;
+      memmove(p, de.name, DIRSIZ);
+      p[DIRSIZ] = 0;
+      if(stat(buf, &st) < 0){
+        printf("ls: cannot stat %s\n", buf);
+        continue;
+      }
+      printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+    }
+    break;
+```
 
 
 
 
 
+### 1.5 xargs
 
 
 
@@ -316,6 +687,8 @@ main()
 }
 //就像这样
 ```
+
+
 
 
 
@@ -675,3 +1048,24 @@ sys_fork ->  syscall -> fork
 引入了一个概念： kernel 就是trust computing base
 
 shell：talks to filesystem
+
+
+
+
+
+
+
+# 11.how to use gdb debug
+
+Type "apropos word" to search for commands related to "word".
+warning: File "/home/root/lab/mit-6.S081-2022-lab1/.gdbinit" auto-loading has been declined by your `auto-load safe-path' set to "$debugdir:$datadir/auto-load".
+To enable execution of this file add
+        add-auto-load-safe-path /home/root/lab/mit-6.S081-2022-lab1/.gdbinit
+line to your configuration file "/root/.config/gdb/gdbinit".
+To completely disable this security protection add
+        set auto-load safe-path /
+line to your configuration file "/root/.config/gdb/gdbinit".
+
+就是说：由于gdb的安全策略，用户的gdb调试文件被拒绝加入到auto-load safe-path
+
+我的办法，在~/.gdbinit中加入这个文件的内容
