@@ -115,3 +115,9 @@ Line 15: Char 16: runtime error: member access within misaligned address 0xbebeb
 
 
 　对于滑动窗口而言，可能需要一个map来储存现在看见的字符，在每次进行插入操作的时候进行扫描，查看他的v是否大于1
+
+
+
+
+
+对lc而言，我需要熟悉stl库中一些常用数据结构的用法：比如堆heap，队列，栈，集合等；然后再拓展一下，哪些是线程安全的？一般会怎么用？

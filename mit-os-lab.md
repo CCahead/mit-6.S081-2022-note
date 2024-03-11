@@ -534,6 +534,8 @@ void primes_exec(){
 
 ### 1.4 find
 
+#### 1.string相关前置知识
+
 观察ls，它先打开文件
 
 ```c
@@ -548,6 +550,19 @@ void primes_exec(){
 然后就是对string的操作：
 
 几种常用的string操作符：
+
+##### 疑问点：
+
+```c
+  char* a="abc111";
+  char b[5];
+  memmove(b,a,sizeof(a));
+但很奇怪的是，这样表示的a，sizeof算出来是8；
+    char a[]="abc111";
+这样表示的a，sizeof是7UL 为什么会这样？
+```
+
+
 
 ```c
 char *strcpy(char *dest, const char *src)   dest<-src
@@ -593,14 +608,11 @@ if Return value = 0 then it indicates str1 is equal to str2.
 ```
 
 ```c
-strlen
+memmove(dest,src,len)
+把src,src+len-1这一块数据复制到dest,dest+len-1这个区域中
 ```
 
-
-
-A,B:A-B<0 =>A<B
-
-#### 1.void ls(char *path)
+#### 2.void ls(char *path)
 
 一个char缓存区，跟指针；一个文件描述符；一个描述目录的数据结构；一个记录metadata的结构stat
 
@@ -613,9 +625,9 @@ A,B:A-B<0 =>A<B
 #define DIRSIZ 14
 
 struct dirent {
-  ushort inum;
-  char name[DIRSIZ];
-};
+  ushort inum; // ushort是unsigned short: 16bit=2bytes
+  char name[DIRSIZ];//1 char = 1 bytes
+};//所以加起来刚好16bytes
 ```
 
 目录的数据结构是这样的
@@ -623,33 +635,474 @@ struct dirent {
 
 
 ```c
- case T_DIR:
+其中buf是拷贝自path,p指向path后：xxx/
+case T_DIR:
     if(strlen(path) + 1 + DIRSIZ + 1 > sizeof buf){
       printf("ls: path too long\n");
       break;
     } //这个为什么前后要+1，我的理解是要做alignment，前后要有元素才行1+14+1=16bytes(1 char =1 byte)
     strcpy(buf, path);//把之前ls传入的path拷贝到缓存区
-    p = buf+strlen(buf);//临时指针p指向buf+strlen(buf)?这里有点没懂
-    *p++ = '/';
-    while(read(fd, &de, sizeof(de)) == sizeof(de)){
-      if(de.inum == 0)
+    p = buf+strlen(buf); 
+//临时指针p指向buf+strlen(buf)：这个就是让p指向偏移量为strlen(buf)的位置
+strlen记录了buf非'\0'元素的字符长度：比如'abc'就是3 然后buf[0]=*(buf+0)指向0，同理buf[2]=*(buf+2)=2，而buf[3]=*(buf+3)就指向123后面这个'\0'的位置
+		*p++ = '/'; //把'\0'替换为'/'
+    while(read(fd, &de, sizeof(de)) == sizeof(de)){ //读fd，每次读16字节并记录到de上？
+      if(de.inum == 0) 
         continue;
-      memmove(p, de.name, DIRSIZ);
-      p[DIRSIZ] = 0;
-      if(stat(buf, &st) < 0){
+      memmove(p, de.name, DIRSIZ); //把当前de.name全部拷贝到p位置去：de.name->[p,p+13]：metadata拷贝过去了
+      p[DIRSIZ] = 0;//把p[14]这个位置标记为0 :'\0' 
+      if(stat(buf, &st) < 0){//这里会对buf进行重新赋值吗？
+        //char *file, struct stat *st)Place info about an open file into *st： buf是文件名
         printf("ls: cannot stat %s\n", buf);
         continue;
       }
+      //这里就已经在打印buf内容了
       printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
-    }
+    }//while 
     break;
+```
+
+```c
+$ ls 
+./
+./.
+.              1 1 1024
+./..
+..             1 1 1024
+./README
+README         2 2 2227
+./xargstest.sh
+xargstest.sh   2 3 93
+./cat
+cat            2 4 32856
+./echo
+echo           2 5 31704
+./forktest
+forktest       2 6 15832
+./grep
+grep           2 7 36232
+./init
+init           2 8 32200
+./kill
+kill           2 9 31664
+./ln
+ln             2 10 31488
+./ls
+ls             2 11 35464
+./mkdir
+mkdir          2 12 31720
+./rm
+rm             2 13 31712
+./sh
+sh             2 14 54152
+./stressfs
+stressfs       2 15 32600
+./usertests
+usertests      2 16 180496
+./grind
+grind          2 17 47544
+./wc
+wc             2 18 33808
+./zombie
+zombie         2 19 31072
+./sleep
+sleep          2 20 31760
+./pingpong
+pingpong       2 21 32200
+./test
+test           2 22 38456
+./primes
+primes         2 23 33600
+./find
+find           2 24 31080
+./console
+console        3 25 
+我自己做了一个小测试，在while中打印了一下会出现的内容，它是这样的
+语法问题：
+      struct st_list* sl=malloc(sizeof(struct st_list*));在函数内是怎么声明一个队列呢？指针数组
+
 ```
 
 
 
+我要写一个find函数你帮我评估一下我认为的工作流程：
+1. find b
+    就在当前目录下，使用stat查看每个文件的metadata，用strcmp检查名字是否一致
+    2.find . b
+    2.1检查当前目录下的所有文件，
+    if是文件，重复1步骤检查文件名是否为b
+    if 是目录，用一个子进程recurse它 
+    预期效果应该是跟linux命令一样：其中mkfs在这一级目录中是目录
 
+  ```shell
+  root@iZuf6gjntv5gpee0o6e0quZ:/home/root/lab/mit-6.S081-2022-lab1# find mkfs 
+  mkfs
+  mkfs/mkfs.c
+  mkfs/mkfs
+  ```
+
+  lab要求
+
+  ```c
+  find . b
+      ./b
+      ./a/b
+      ./a/aa/b
+  这样应该是说要在. 
+  ```
+
+  ```c
+  $ find .
+  ./.
+  ./a
+  ./a/..
+  ./a/../a
+  出现这样的问题了...
+  ```
+
+  1.本来就是文件，可以在当前目录.下直接被找到
+
+  2.本地文件没有，需要翻阅
+
+  可以参考一下linux的find命令
+
+  ```
+  root@iZuf6gjntv5gpee0o6e0quZ:/home/root/lab/mit-6.S081-2022-lab1/find# find . b
+  .
+  ./b
+  ./a
+  ./a/aa
+  ./a/aa/b
+  ./a/b
+  b
+  假如是这样的文件结构
+  .
+  ├── a
+  │   ├── aa
+  │   │   └── b
+  │   └── b
+  └── b
+  那linux使用的应该就是一个dfs，是用递归实现的查找
+  
+  find ./a/aa b
+  ./a/aa
+  ./a/aa/b
+  b
+  
+  find ./a b
+  ./a
+  ./a/aa
+  ./a/aa/b
+  ./a/b
+  b
+  相当于find 指定目录下的b 指定文件
+  ```
+
+
+
+
+
+读文件是一个循环
+
+Find(dir, file):
+
+if find file
+
+​	print dir/file
+
+if find subdir 
+
+​	拿一个标识位来记录是否存在subdir，如果不存在的话就直接退出
+
+​	Find(subdir,file)
+
+```c
+$ find . b
+当前de.name:.
+当前de.name:..
+当前de.name:README
+当前de.name:xargstest.sh
+当前de.name:cat
+当前de.name:echo
+当前de.name:forktest
+当前de.name:grep
+当前de.name:init
+当前de.name:kill
+当前de.name:ln
+当前de.name:ls
+当前de.name:mkdir
+当前de.name:rm
+当前de.name:sh
+当前de.name:stressfs
+当前de.name:usertests
+当前de.name:grind
+当前de.name:wc
+当前de.name:zombie
+当前de.name:sleep
+当前de.name:pingpong
+当前de.name:test
+当前de.name:primes
+当前de.name:find
+当前de.name:console
+当前de.name:b
+./b
+当前de.name:a
+子目录是
+：./a当前de.name:
+这里为什么有这么多废循环呢？
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+当前de.name:
+到我了
+当前de.name:.
+当前de.name:..
+当前de.name:b
+./a/b
+当前de.name:aa
+子目录是
+：./a/aa到我了
+当前de.name:.
+当前de.name:..
+当前de.name:b
+./a/aa/b
+```
+
+
+
+```
+$ find . b
+./b
+./a/b
+./a/aa/b
+
+
+$ mkdir gk2SoaYR
+$ echo > gk2SoaYR/mJnGPG5X
+$ mkdir gk2SoaYR/26RONnss
+$ echo > gk2SoaYR/26RONnss/mJnGPG5X
+$ mkdir yNkpUcDf
+$ echo > yNkpUcDf/mJnGPG5X
+$ find . mJnGPG5X
+./yNkpUcDf/mJnGPG5X
+$ qemu-system-riscv64: terminating on signal 15 from pid 485737 (make)
+.
+├── gk2SoaYR
+│   ├── 26RONnss
+│   │   └── mJnGPG5X
+│   └── mJnGPG5X
+└── yNkpUcDf
+    └── mJnGPG5X
+```
+
+
+
+​	
 
 ### 1.5 xargs
+
+
+
+Maxargs 32一共有32个，
+
+
+
+```sh
+linux实机测试：
+root@iZuf6gjntv5gpee0o6e0quZ:/home/root/lab/mit-6.S081-2022-lab1/find# find .|xargs grep hello
+grep: .: Is a directory
+grep: ./gk2SoaYR: Is a directory
+grep: ./gk2SoaYR/26RONnss: Is a directory
+./gk2SoaYR/mJnGPG5X:hello
+./gk2SoaYR/mJnGPG5X:hello 1
+./gk2SoaYR/mJnGPG5X:hello 2
+./gk2SoaYR/mJnGPG5X:helloolleh
+grep: ./yNkpUcDf: Is a directory
+```
+
+但是很奇怪的是，在xv6上，当我执行xargs时，它会这样：
+
+```c
+int
+main(int argc, char** argv){
+    char* cmd[MAXARG];
+    int i,xargs_location=0,grep_location=0;
+
+
+    for(i=0;i<argc;i++){
+        printf("%s:%d,",argv[i],i);
+    }
+    printf("\n");
+
+$ echo hello too | xargs echo bye
+xargs:0,echo:1,bye:2,
+sh会直接从xargs开始读？意味着argv只有三个吗？
+
+  
+$ echo hello too | xargs echo bye
+xargs:0,echo:1,bye:2,(null):3,usertrap(): unexpected scause 0x000000000000000d pid=5
+            sepc=0x000000000000067e stval=0x0000000000657962
+经过实际测试，在main的传参中确实只有3个，就是管道后这几个；那问题来了，管道前面的参数是怎么传入main的呢？（因为main入口的argv只接受到了|管道后的内容：那1. 是因为管道操作，才是这样的吗？还是xargs命令导致这样的结果的？
+```
+
+```c
+好像是因为管道才是这样操作的...
+
+// $ echo hello too | xargs echo bye
+// xargs:0,echo:1,bye:2,
+
+    for(i=0;i<argc;i++){
+        if(!strcmp(argv[i],"xargs")){
+            xargs_location=i;
+            grep_location=i-1;
+        }
+    }
+    // $ echo hello too | xargs echo bye
+    //    0     1    2   3  4    5    6  argc:7, grep_location:3,xargs_location:4
+    // memmove(argc-xarg:7-4=3)
+    // bye hello too
+之前我是这样一个思路，我以为sh传入main的argv数组会包括所有的命令，所以写了下面的逻辑
+    int pid;
+    pid=fork();
+    if(pid==0){
+        printf("%d,%d\n",xargs_location,grep_location);
+        printf("%s,%s\n",argv[0],argv[xargs_location+1]);
+        if(!strcmp(argv[0],argv[xargs_location+1])){//如果命令一样就合并
+            memmove(cmd[0],argv[xargs_location+1],argc-xargs_location-2); //5 6 位置到：echo bye
+            memmove(cmd[0]+argc-xargs_location,argv[1],grep_location-1); //hello too: grep_location:3; echo:0 3-0-1           
+        }
+        // int exec(char *file, char *argv[])
+        // Load a file and execute it with arguments; only returns if error.
+        exec(argv[0],cmd);
+    }
+但是我在尝试之后惊奇的发现这样的逻辑是错的，所以我又调整了一下
+    char* cmd[MAXARG];
+    int i,xargs_location=0,grep_location=0;
+
+
+    for(i=0;i<argc;i++){
+        printf("%s:%d,",argv[i],i);
+    }
+    printf("\n");
+    
+    char a[2048];
+    read(0,a,sizeof(a));
+    for(i=0;i<=2047;i++){
+        printf("%c",a[i]);
+    }
+```
+
+
+
+我在xargs最开始使用了一个缓存区，记录下read(0,..,..)区域的值，然后打印出来，发现可以打印出管道前面的命令
+比如ls |xargs echo a
+就先执行xargs的参数，然后ls也被执行，执行结果放在fd=0这里
+但是问题是：standard output是fd=0还是fd=1?
+When we want to read or write a file, we identify the file with the file descriptor that was returned by open() or create() function call, and use it as an argument to either read() or write().
+It is by convention that, UNIX System shells associates the file descriptor 0 with Standard Input of a process, file descriptor 1 with Standard Output, and file descriptor 2 with Standard Error.
+意思是：fd=0标准输入流的结果会作为argument传入xargs 后面这个内容当中去，那问题来了，read(0,..,..)的时候，应该怎么打印，在尽可能保存空格的前提下，把结果打印出来呢？ 
+scan loop:
+
+​	 if char==" "
+
+​		add it to argument,jump to next char?
+
+```c
+用这个脚本测了一下：
+    char a[2048];
+    read(0,a,sizeof(a));
+    for(i=0;i<=2047;i++){
+        if(a[i]==' '){
+            continue;
+        }
+        printf("%c",a[i]);
+    }
+可以看到，中间确实是有空格符号的
+$ echo a b c dd|xargs echo test
+xargs:0,echo:1,test:2,
+abcdd
+```
+
+那我就会想，那这个 a b c dd这些数字可以用char* c[32]读取吗？（整块读取）
+
+```c
+        char* c[32];
+        int n;
+        while((n=read(0,c,sizeof(c)))>0);
+        for(i=0;i<=31;i++){
+            printf("%s ",c[i]);
+        }
+(null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null) (null)测试后发现不行
+```
+
+
+
+#### 关于memmove的tips？好像不对，应该用strcpy
+
+```c
+  char* c[2];//c: [] []
+
+  char argument1[]="hello";
+  char argument2[]="hello";
+
+  char* arguments[2]={
+    "test1","test2"
+  };字符串指针
+
+  memmove(c[0],argument1,sizeof(argument1));单个字符串数组
+  memmove(c[1],argument2,sizeof(argument2));
+
+  printf("%s,%s\n",c[0],c[1]);
+
+  char* c2[3];
+  memmove(c2,arguments,sizeof(arguments));字符串指针
+
+  printf("%s,%s\n",c2[0],c2[1]);
+结果是这样
+hello,hello
+test1,test2
+  就是说： 字符串指针数组之间可以直接使用memmove来传递数据（c2），单个字符串指针可以跟单个字符串数组传递（c）
+然后如果希望从
+char* arguments[3]={
+    "test1","test2","test3"
+  };
+arugments[1]这里开始传，只传过去"test2","test3"也是可以的！
+  memmove(c2,&arguments[1],sizeof(arguments));用一个指针来实现： 从arguments[1]的地址这里开始传
+
+```
+
+
 
 
 
